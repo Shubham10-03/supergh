@@ -11,18 +11,18 @@ A superset GitHub CLI for enterprise workflows. Everything `gh` does, plus cross
 ### macOS / Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<org>/supergh/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Shubham10-03/supergh/main/install.sh | bash
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/<org>/supergh/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Shubham10-03/supergh/main/install.ps1 | iex
 ```
 
 ### Manual Download
 
-Download the binary for your platform from [Releases](https://github.com/<org>/supergh/releases/latest):
+Download the binary for your platform from [Releases](https://github.com/Shubham10-03/supergh/releases/latest):
 
 | Platform | File |
 |----------|------|
