@@ -20,6 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/Shubham10-03/supergh/main/install.s
 irm https://raw.githubusercontent.com/Shubham10-03/supergh/main/install.ps1 | iex
 ```
 
+
 ### Manual Download
 
 Download the binary for your platform from [Releases](https://github.com/Shubham10-03/supergh/releases/latest):
