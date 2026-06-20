@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "supergh"
+version = "1.0.0"
+description = "A superset GitHub CLI for enterprise workflows"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "supergh contributors"}]
+
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+    "requests>=2.31",
+    "PyJWT>=2.8",
+    "cryptography>=41.0",
+    "keyring>=24.0",
+    "toml>=0.10",
+]
+
+[project.optional-dependencies]
+ui = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "jinja2>=3.1",
+]
+export = [
+    "openpyxl>=3.1",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+sgh = "supergh.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]

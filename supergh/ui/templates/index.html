@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>supergh — dashboard</title>
+<link rel="icon" href="/static/img/logo.png" type="image/png">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<div id="app">
+  <div style="display:flex;align-items:center;justify-content:center;height:100vh;width:100%;color:var(--tx3);font-size:13px">
+    Loading...
+  </div>
+</div>
+<script type="module" src="/static/js/app.js"></script>
+<script>
+window.onerror = function(msg, src, line, col, err) {
+  var el = document.getElementById('app');
+  if (el) el.innerHTML = '<div style="padding:40px;font-family:monospace;font-size:12px;color:#f85149">'
+    + '<p><b>UI Error:</b> ' + msg + '</p>'
+    + '<p style="color:#8b949e">' + (src||'') + ':' + (line||'') + '</p>'
+    + '<p style="margin-top:12px;color:#8b949e">Check browser console (F12) for details.</p></div>';
+};
+</script>
+</body>
+</html>

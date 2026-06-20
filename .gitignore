@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+
+# Build artifacts
+dist/
+build/
+*.spec.bak
+
+# Vendored dependencies (dev only, not in repo)
+vendor/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment / secrets
+.env
+*.pem
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Runtime
+~/.supergh/

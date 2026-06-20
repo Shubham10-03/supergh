@@ -1,0 +1,393 @@
+supergh (sgh) — Design Document
+==================================
+
+Project: c:\Users\n509042\All Repos\learnings\projects\supergh
+Version: 0.1.0
+Language: Python 3.9+
+Platforms: Windows, macOS, Linux
+
+
+================================================================================
+1. WHAT WE BUILT
+================================================================================
+
+1.1 Project Structure
+---------------------
+supergh/
+├── pyproject.toml          # Package metadata, dependencies, entry point
+├── README.md               # Generic open-source README
+├── .gitignore
+├── run.py                  # Dev entry point (bootstraps vendor/, sets prog_name)
+├── sgh.bat                 # Windows launcher
+├── sgh                     # Bash launcher (Git Bash / Linux / Mac)
+├── setup_path.py           # One-time PATH setup (auto-detects OS)
+├── build.py                # PyInstaller build script for standalone exe
+├── sgh.spec                # PyInstaller spec file
+├── vendor/                 # All dependencies vendored (no pip install needed)
+└── supergh/
+    ├── __init__.py         # Package version
+    ├── __main__.py         # Alternative entry point
+    ├── cli.py              # Click CLI root, registers all commands
+    ├── auth/               # Auth system
+    │   ├── base.py         # AuthProvider abstract class, AuthStatus dataclass
+    │   ├── app_auth.py     # GitHub App auth (PEM → JWT → installation token)
+    │   ├── oauth.py        # OAuth device flow auth
+    │   ├── store.py        # TokenStore — OS keychain wrapper via keyring
+    │   └── middleware.py   # Resolves correct auth provider from config
+    ├── config/
+    │   └── manager.py      # ConfigManager — reads/writes ~/.supergh/config.toml
+    ├── api/
+    │   └── client.py       # GitHubClient — pagination, rate limiting, retries
+    ├── commands/            # Core CLI commands (gh-equivalent)
+    │   ├── auth.py         # sgh auth pat|oauth|app|status|logout|refresh|switch
+    │   ├── config_cmd.py   # sgh config get|set|list
+    │   ├── repo.py         # sgh repo list|view|create|clone|fork|delete|archive|edit|rename
+    │   ├── pr.py           # sgh pr list|view|create|merge|close|reopen|checkout|diff|review|comment|checks|ready|edit|lock
+    │   ├── issue.py        # sgh issue list|view|create|close|reopen|comment|edit|lock|pin|transfer|delete
+    │   ├── workflow.py     # sgh workflow list|view|run|enable|disable + sgh run list|view|watch|rerun|cancel|delete|download
+    │   ├── release.py      # sgh release list|view|create|delete|upload
+    │   ├── secret.py       # sgh secret list|set|delete + sgh variable list|set|delete (repo/org/env)
+    │   ├── misc.py         # sgh label|milestone|org|team|gist commands
+    │   └── search.py       # sgh search|browse|status|ssh-key|gpg-key|cache|api|completion
+    ├── extras/             # Superset commands (beyond gh)
+    │   ├── pipeline.py     # sgh pipeline status|history|trigger|compare|flaky
+    │   └── report.py       # sgh report|audit|compliance|drift|sync|bulk
+    ├── export/
+    │   └── exporter.py     # Export to CSV, JSON, Markdown, Excel
+    ├── ui/
+    │   ├── tui.py          # Textual-based terminal dashboard
+    │   ├── web.py          # FastAPI web dashboard server
+    │   └── templates/
+    │       └── app.html    # Web UI single-page app (Alpine.js + Tailwind)
+    └── utils/
+        ├── errors.py       # Global error handler (clean user-facing messages)
+        └── logger.py       # File-based logging to ~/.supergh/logs/sgh.log
+
+
+1.2 Authentication System
+-------------------------
+Three auth methods:
+  - PAT: sgh auth pat — paste token, verified against GitHub, stored in keychain
+  - OAuth: sgh auth oauth — device flow, requires setup-oauth first for client ID
+  - App: sgh auth app — GitHub App with PEM key, auto-fetches app name/slug
+
+Token storage:
+  - All tokens in OS keychain via `keyring` library
+  - Windows: Credential Manager
+  - macOS: Keychain
+  - Linux: Secret Service
+  - NEVER written to disk files
+
+Org resolution:
+  - App auth: auto-detects installed org from GitHub /app/installations API
+  - PAT/OAuth: uses config (core.default_org or profile org)
+  - App's installed_org stored in keychain, used for all API calls
+
+Auth status display:
+  - Shows auth type, app name, bot slug ([bot] suffix), org, token expiry
+
+
+1.3 API Client
+--------------
+File: supergh/api/client.py
+
+Features:
+  - Auto-injects auth token (uses "token" prefix for universal PAT/OAuth/App compat)
+  - Auto-pagination via Link header following
+  - Rate limit awareness (warns at <10 remaining, waits at 0)
+  - Retry logic: 3 retries on 5xx with exponential backoff
+  - 30 second timeout
+  - Debug mode: shows request URLs (tokens never printed)
+  - Supports both REST and GraphQL
+
+
+1.4 Config System
+-----------------
+Location: ~/.supergh/config.toml
+
+Structure:
+  [core]
+  default_profile = "default"
+  default_org = ""
+  output_format = "table"
+  pager = true
+  color = true
+
+  [profiles.default]
+  auth_type = "oauth"  # oauth | app
+  org = ""
+  app_id = ""
+  pem_path = ""
+
+  [cache]
+  enabled = true
+  ttl_seconds = 300
+
+Rules:
+  - NO secrets ever in config (tokens in keychain, PEM path only not content)
+  - Multiple profiles supported via sgh auth switch <profile>
+
+
+1.5 Error Handling
+------------------
+File: supergh/utils/errors.py
+
+Behavior:
+  - Normal mode: clean one-line error + hint
+  - --debug mode: full rich traceback
+  - HTTP errors mapped to human messages (401→auth, 403→permissions, 404→not found)
+  - URL errors, connection errors, timeout — all handled
+  - --debug flag works anywhere in command (auto-repositioned)
+
+
+1.6 Export System
+-----------------
+File: supergh/export/exporter.py
+
+Supports:
+  - --output table|json|csv (stdout)
+  - --export file.csv (CSV file)
+  - --export file.json (JSON file)
+  - --export file.xlsx (Excel with styled headers, auto-width columns)
+  - --export file.md (Markdown table)
+
+Currently wired to: sgh repo list
+Pattern ready to add to any other list command.
+
+
+1.7 Logging
+------------
+File: supergh/utils/logger.py
+Output: ~/.supergh/logs/sgh.log
+
+  - File handler only (no console spam)
+  - DEBUG level in file
+  - Used by web UI endpoints to log API failures silently
+
+
+1.8 Web UI
+-----------
+File: supergh/ui/web.py + templates/app.html
+Launch: sgh ui (opens browser at http://127.0.0.1:8787)
+
+Stack:
+  - Backend: FastAPI (async)
+  - Frontend: Alpine.js + TailwindCSS (CDN, zero build step)
+  - Server: Uvicorn, localhost only
+
+API endpoints:
+  /api/auth          — current auth info
+  /api/auth/pat      — login with PAT from browser (POST)
+  /api/auth/logout   — logout (POST)
+  /api/permissions   — detect what app can access
+  /api/repos         — list repos
+  /api/repos/{name}  — get single repo
+  /api/repos (POST)  — create repo
+  /api/repos/{name}/pulls     — list PRs
+  /api/repos/{name}/issues    — list issues
+  /api/repos/{name}/workflows — list workflows
+  /api/repos/{name}/runs      — list runs
+  /api/repos/{name}/secrets   — list secrets
+  /api/repos/{name}/variables — list variables
+  /api/teams         — list teams
+  /api/pipelines     — cross-repo pipeline overview
+  /api/search        — search code/repos/issues
+
+Features:
+  - Sidebar navigation
+  - Theme toggle (dark/light, persisted in localStorage)
+  - Permission-aware disabled states
+  - Repo drill-down (PRs, Issues, Workflows, Runs, Secrets, Variables)
+  - Create repo modal
+  - Trigger workflow, rerun/cancel runs
+  - Search across org
+  - Auth info shown in sidebar
+
+
+1.9 Distribution
+-----------------
+  - Vendor directory: all deps bundled, no pip install needed
+  - setup_path.py: auto-detects OS, adds project to PATH
+  - sgh.bat / sgh: platform launchers
+  - build.py + sgh.spec: PyInstaller config for standalone exe
+
+
+================================================================================
+2. WHAT IS FLAKY / KNOWN ISSUES
+================================================================================
+
+2.1 Web UI — Functional Issues
+------------------------------
+- No login screen: if not authenticated, UI loads but shows empty data with errors
+  (backend endpoint /api/auth/pat exists but frontend doesn't use it yet)
+- No loading states: tables show empty with no spinner/skeleton
+- No toast notifications: actions (trigger workflow, create repo) give no feedback
+- No smooth transitions: page changes are instant/jarring
+- Search results displayed as raw JSON (not rendered)
+- No pagination: loads all repos at once (slow for 500+ repo orgs)
+- Permission tooltips: CSS hover works but positioning may be off on some browsers
+- No form validation in create repo modal (can submit empty name)
+- No confirmation dialogs for destructive actions in UI
+- Theme toggle icon (◐/◑) may not render in all fonts
+
+2.2 Web UI — Architecture Issues
+---------------------------------
+- Permission detection makes multiple API calls on every page load (slow)
+  Should cache permissions for the session
+- All API calls are synchronous in the FastAPI backend (uses requests not httpx)
+  Works but not truly async — one slow call blocks others
+- No WebSocket for live updates (pipelines tab is snapshot, not live)
+- No session management — if token expires mid-session, calls silently fail
+
+2.4 Auth — Edge Cases
+---------------------
+- PAT input: Windows cmd paste works with click.prompt() but token is visible
+  (no reliable way to hide long pastes on Windows cmd)
+- OAuth device flow: if org has app restrictions, user gets 403 after login
+  with no clear guidance in the CLI beyond the error message
+- Token refresh: for OAuth, if refresh_token also expires, fails silently
+  until next API call which then shows "Not authenticated"
+- App auth: if PEM file is moved/deleted after setup, error is unclear
+
+2.5 CLI — Minor Issues
+-----------------------
+- sgh status (notifications) doesn't work with App auth (expected, but confusing)
+- --export option only wired to sgh repo list (pattern exists but not on pr/issue/run list)
+- sgh run watch: works but can hit rate limits on fast polling
+- Secret encryption (_encrypt_secret) requires PyNaCl which is not in vendor
+  (will fail on first use — needs: pip install pynacl -t vendor)
+- sgh completion: generates shell-specific instructions but not tested on all shells
+
+2.6 General
+-----------
+- No tests (no pytest suite)
+- No CI/CD pipeline for the tool itself
+- PyInstaller build (python build.py) not tested — may need hidden imports adjusted
+- vendor/ directory is large (~50MB) due to cryptography compiled binaries
+
+
+================================================================================
+3. WHAT IS NEEDED FURTHER
+================================================================================
+
+3.1 Web UI — Must Fix
+----------------------
+[ ] Login screen: show PAT input form when /api/auth returns authenticated=false
+[ ] Loading states: skeleton/spinner for every data fetch
+[ ] Toast/notification system: success/error feedback for all actions
+[ ] Smooth transitions: CSS transitions between views
+[ ] Proper search results rendering: table format, clickable links
+[ ] Error states in UI: "No PRs found" vs "Permission denied" vs "Loading"
+[ ] Session-level permission caching (don't re-check on every page)
+[ ] Confirmation dialogs for destructive actions (delete repo, cancel run)
+[ ] Form validation (required fields, name format checks)
+
+3.2 Web UI — Enhancements
+--------------------------
+[ ] Create PR from UI (form with title, body, head/base branch selection)
+[ ] Create issue from UI
+[ ] Merge PR from UI (method selection: squash/merge/rebase)
+[ ] Close/reopen issues from UI
+[ ] Edit repo settings from UI
+[ ] Bulk actions: select multiple repos, apply action
+[ ] Live pipeline view: WebSocket or polling for in-progress runs
+[ ] Activity feed / recent events
+[ ] Org members view
+[ ] Branch protection status in repo detail
+[ ] Download artifacts from runs
+[ ] Secret/variable create/edit from UI
+[ ] Responsive design for smaller screens
+
+3.4 CLI — Enhancements
+-----------------------
+[ ] Wire --export/--output to ALL list commands (pr list, issue list, run list, etc.)
+[ ] sgh notify configure/test (Slack/Teams/email alerts)
+[ ] sgh template list/apply (org repo templates)
+[ ] sgh deps graph/tree/stale (dependency analysis from pom.xml/package.json)
+[ ] sgh codespaces list/create/delete
+[ ] sgh alias set/list/delete (custom command aliases)
+[ ] Add PyNaCl to vendor for secret encryption
+[ ] Interactive mode: sgh -i (REPL-style)
+
+3.5 Testing
+-----------
+[ ] Unit tests for auth (mock keyring, mock API responses)
+[ ] Unit tests for config manager
+[ ] Integration tests for API client (mock server)
+[ ] CLI tests using click.testing.CliRunner
+[ ] Web UI tests (httpx TestClient for FastAPI endpoints)
+
+3.6 Distribution
+----------------
+[ ] Test PyInstaller build on Windows
+[ ] Test PyInstaller build on macOS (if available)
+[ ] GitHub Actions CI pipeline for the tool itself
+[ ] Auto-release workflow: tag → build exe → attach to GitHub release
+[ ] Shell completion testing on bash, zsh, fish, PowerShell
+[ ] Homebrew formula (macOS)
+[ ] Scoop manifest (Windows)
+
+3.7 Security Hardening
+-----------------------
+[ ] Audit all token handling paths for memory leaks
+[ ] Add token masking in debug output for web UI API calls
+[ ] Rate limit the web UI endpoints (prevent localhost abuse)
+[ ] Add CSRF protection to web UI POST endpoints
+[ ] Auto-shutdown web UI after idle timeout
+[ ] Validate PEM file format before attempting JWT sign
+
+3.8 Documentation
+-----------------
+[ ] Man page generation from click help
+[ ] Detailed --help examples on every command (partially done)
+[ ] Contributing guide
+[ ] Architecture diagram
+[ ] API reference for web UI endpoints
+
+
+================================================================================
+4. ARCHITECTURE DECISIONS
+================================================================================
+
+Why Python:
+  - Single codebase for all platforms
+  - Rich CLI ecosystem (click, rich, textual)
+  - pip installable, runs where Python 3.9+ exists
+  - No dual scripting (unlike shell: bash + PowerShell)
+
+Why vendor/:
+  - Zero-dependency deployment (clone and run)
+  - No venv needed
+  - Deterministic — same deps everywhere
+  - Can still pip install for dev if preferred
+
+Why keyring for tokens:
+  - OS-native secure storage
+  - Never touches disk as plaintext
+  - Windows Credential Manager, macOS Keychain, Linux Secret Service
+
+Why "token" header prefix (not "Bearer"):
+  - Works for ALL GitHub token types (github_pat_, ghp_, gho_, installation tokens)
+  - "Bearer" fails for some fine-grained PAT scenarios
+
+Why FastAPI for Web UI:
+  - Lightweight, async-capable
+  - No npm/node dependency
+  - Single HTML file with Alpine.js (no build step)
+  - Localhost only — security by design
+
+Why no built-in OAuth Client ID:
+  - Tool is generic/open-source — each org registers their own
+  - Avoids OAuth app restriction issues at someone else's org
+  - Client ID stored in keychain after setup-oauth
+
+
+================================================================================
+5. FILE LOCATIONS
+================================================================================
+
+Config:     ~/.supergh/config.toml
+Profiles:   ~/.supergh/profiles/
+Cache:      ~/.supergh/cache/
+Logs:       ~/.supergh/logs/sgh.log
+Tokens:     OS Keychain (service: "supergh")
