@@ -16,8 +16,6 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact: sgh-linux-x86_64
-          - os: macos-13
-            artifact: sgh-macos-x86_64
           - os: macos-latest
             artifact: sgh-macos-arm64
           - os: windows-latest
