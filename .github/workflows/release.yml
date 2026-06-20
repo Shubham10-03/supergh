@@ -2,14 +2,11 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - "VERSION"
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag (e.g. v1.0.0)"
-        required: true
-        default: "v1.0.0"
 
 permissions:
   contents: write
@@ -64,14 +61,66 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v4
-        with:
-          tag_name: ${{ github.ref_name || inputs.tag }}
-          generate_release_notes: true
-          files: artifacts/*
+      - name: Read version and compute tags
+        id: version
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f1-2)
+
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "TAG_FULL=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "TAG_MINOR=v${MINOR}" >> $GITHUB_OUTPUT
+          echo "TAG_MAJOR=v${MAJOR}" >> $GITHUB_OUTPUT
+
+          echo "Computed tags: v${VERSION}, v${MINOR}, v${MAJOR}, latest"
+
+      - name: Create/update tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          TAG_FULL="${{ steps.version.outputs.TAG_FULL }}"
+          TAG_MINOR="${{ steps.version.outputs.TAG_MINOR }}"
+          TAG_MAJOR="${{ steps.version.outputs.TAG_MAJOR }}"
+
+          # Delete existing tags if they exist (for moving tags like vX, vX.Y, latest)
+          for TAG in "$TAG_FULL" "$TAG_MINOR" "$TAG_MAJOR" "latest"; do
+            git tag -d "$TAG" 2>/dev/null || true
+            git push origin ":refs/tags/$TAG" 2>/dev/null || true
+          done
+
+          # Create all tags pointing to HEAD
+          git tag -a "$TAG_FULL" -m "Release $TAG_FULL"
+          git tag -f "$TAG_MINOR" -m "Release $TAG_MINOR"
+          git tag -f "$TAG_MAJOR" -m "Release $TAG_MAJOR"
+          git tag -f "latest" -m "Latest release ($TAG_FULL)"
+
+          # Push all tags
+          git push origin "$TAG_FULL" "$TAG_MINOR" "$TAG_MAJOR" "latest" --force
+
+      - name: Create/update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_FULL="${{ steps.version.outputs.TAG_FULL }}"
+
+          # Delete existing release if it exists
+          gh release delete "$TAG_FULL" --yes 2>/dev/null || true
+
+          # Create release with auto-generated notes
+          gh release create "$TAG_FULL" artifacts/* \
+            --title "$TAG_FULL" \
+            --generate-notes \
+            --latest
