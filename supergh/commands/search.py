@@ -330,15 +330,27 @@ def cache_delete(ctx, cache_id, repo_name, org):
 @click.option("--method", "-X", default="GET", type=click.Choice(["GET", "POST", "PUT", "PATCH", "DELETE"]))
 @click.option("--body", "-b", default=None, help="JSON body.")
 @click.option("--jq", "jq_filter", default=None, help="JQ-style key to extract (simple dot notation).")
+@click.option(
+    "--jwt/--no-jwt",
+    "force_jwt",
+    default=None,
+    help="Force app JWT (--jwt) or installation token (--no-jwt). "
+    "Default: auto-detect (app-level endpoints use the JWT).",
+)
 @click.pass_context
-def api(ctx, endpoint, method, body, jq_filter):
-    """Make a raw GitHub API call."""
+def api(ctx, endpoint, method, body, jq_filter, force_jwt):
+    """Make a raw GitHub API call.
+
+    Token selection is automatic: app-level endpoints (e.g. /app,
+    /app/installations) use the GitHub App JWT, while everything else uses the
+    installation access token. Override with --jwt or --no-jwt.
+    """
     client = _client(ctx)
     kwargs = {}
     if body:
         kwargs["json"] = json.loads(body)
 
-    resp = client.request(method, endpoint, **kwargs)
+    resp = client.request(method, endpoint, force_jwt=force_jwt, **kwargs)
     data = resp.json() if resp.content else {}
 
     if jq_filter:
