@@ -143,13 +143,23 @@ def oauth():
 
 
 @auth.command()
-def app():
+@click.option("--name", "-n", default=None, help="Friendly app name. Reuses a registered app if it exists.")
+@click.option("--app-id", "app_id_opt", default=None, help="GitHub App ID (first-time registration).")
+@click.option("--pem", "pem_opt", default=None, type=click.Path(), help="Path to PEM private key (first-time registration; copied into ~/.supergh/apps/).")
+@click.option("--org", "org_opt", default=None, help="Org to use (skips the installation prompt).")
+def app(name, app_id_opt, pem_opt, org_opt):
     """Login with a GitHub App (PEM key).
 
     \b
-    Prompts for:
-      - GitHub App ID
-      - Path to PEM private key file
+    First time (registers the app, copying the PEM into ~/.supergh/apps/):
+      sgh auth app --name captwo --app-id 123 --pem ./captwo.pem
+      sgh auth app            # interactive: prompts for name, App ID, PEM path
+
+    \b
+    Afterwards (reuse a registered app — no path needed):
+      sgh auth app --name captwo
+
+    Registered apps are listed by: sgh app list
     """
     _check_existing_auth()
     from pathlib import Path
@@ -157,16 +167,46 @@ def app():
     import jwt as pyjwt
     import time as t
 
+    from supergh.auth.app_registry import get_registry
+
     cfg = get_config()
-    app_id = click.prompt("GitHub App ID")
-    pem_path = click.prompt("Path to PEM file")
+    registry = get_registry()
 
-    pem_file = Path(pem_path).expanduser()
-    if not pem_file.exists():
-        console.print(f"[red]PEM file not found: {pem_path}[/red]")
-        raise SystemExit(1)
+    # --- Resolve app_id + pem path from the registry or from first-time input ---
+    reused = False
+    if name and registry.exists(name):
+        entry = registry.get(name)
+        if not registry.pem_present(entry):
+            console.print(f"[red]Registered app '{name}' is missing its PEM file "
+                          f"({entry.pem_file}). Re-register with --pem.[/red]")
+            raise SystemExit(1)
+        app_id = entry.app_id
+        pem_file = registry.pem_path(entry)
+        if not org_opt and entry.org:
+            org_opt = entry.org
+        reused = True
+        console.print(f"[dim]Using registered app '{name}' (ID: {app_id}).[/dim]")
+    else:
+        # First-time registration path.
+        if not name:
+            name = click.prompt("App name (for future reuse)")
+        app_id = app_id_opt or click.prompt("GitHub App ID")
+        pem_input = pem_opt or click.prompt("Path to PEM file")
+        pem_src = Path(pem_input).expanduser()
+        if not pem_src.exists():
+            console.print(f"[red]PEM file not found: {pem_input}[/red]")
+            raise SystemExit(1)
+        # Register now (copies PEM into ~/.supergh/apps/ with 0600 perms).
+        try:
+            entry = registry.register(name=name, app_id=str(app_id), pem_source=pem_src,
+                                      org=org_opt or "", overwrite=True)
+        except (ValueError, FileNotFoundError) as e:
+            console.print(f"[red]{e}[/red]")
+            raise SystemExit(1)
+        pem_file = registry.pem_path(entry)
+        console.print(f"[dim]Registered app '{name}' → {entry.pem_file} (key stored securely).[/dim]")
 
-    pem_bytes = pem_file.read_bytes()
+    pem_bytes = Path(pem_file).read_bytes()
 
     # Validate PEM format
     if b"-----BEGIN" not in pem_bytes:
@@ -177,7 +217,7 @@ def app():
     console.print("[dim]Validating credentials against GitHub...[/dim]")
     try:
         now = int(t.time())
-        payload = {"iat": now - 60, "exp": now + 600, "iss": app_id}
+        payload = {"iat": now - 60, "exp": now + 600, "iss": str(app_id)}
         jwt_token = pyjwt.encode(payload, pem_bytes, algorithm="RS256")
     except Exception as e:
         console.print(f"[red]Failed to sign JWT — invalid PEM key.[/red]")
@@ -213,13 +253,18 @@ def app():
         console.print("[red]This App has no installations. Install it on an organization first.[/red]")
         raise SystemExit(1)
 
-    # Ask which org if multiple
+    # Pick org: explicit --org/registry, else single install, else prompt.
     orgs = [i["account"]["login"] for i in installations if i.get("account")]
-    if len(orgs) == 1:
+    if org_opt and org_opt in orgs:
+        org = org_opt
+    elif len(orgs) == 1:
         org = orgs[0]
     else:
         console.print(f"  Installed on: {', '.join(orgs)}")
         org = click.prompt("  Which org to use", type=click.Choice(orgs))
+
+    # Persist the resolved org back to the registry entry.
+    registry.set_org(name, org)
 
     # Get installation token to fully validate
     install = next(i for i in installations if i["account"]["login"] == org)
@@ -248,13 +293,17 @@ def app():
     store.set_token("installed_org", org)
     store.set_token("app_name", app_name)
 
-    cfg.set(f"profiles.{cfg.active_profile_name}.auth_type", "app")
-    cfg.set(f"profiles.{cfg.active_profile_name}.app_id", app_id)
-    cfg.set(f"profiles.{cfg.active_profile_name}.pem_path", str(pem_file))
-    cfg.set(f"profiles.{cfg.active_profile_name}.org", org)
+    # Use the app name as the profile name so multiple apps coexist.
+    profile_name = name or cfg.active_profile_name
+    cfg.set(f"profiles.{profile_name}.auth_type", "app")
+    cfg.set(f"profiles.{profile_name}.app_id", str(app_id))
+    cfg.set(f"profiles.{profile_name}.pem_path", str(pem_file))
+    cfg.set(f"profiles.{profile_name}.org", org)
+    cfg.set("core.default_profile", profile_name)
     cfg.set("core.default_org", org)
 
-    console.print(f"[green]Authenticated as {app_name} on {org}[/green]")
+    verb = "Reusing" if reused else "Registered &"
+    console.print(f"[green]{verb} authenticated as {app_name} on {org} (profile: {profile_name})[/green]")
 
 
 @auth.command("setup-oauth")

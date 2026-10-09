@@ -4,6 +4,7 @@ import click
 
 from supergh import __version__
 from supergh.commands.auth import auth
+from supergh.commands.app import app_cmd
 from supergh.commands.config_cmd import config
 from supergh.commands.repo import repo
 from supergh.commands.pr import pr
@@ -25,7 +26,7 @@ from supergh.extras.report import report, audit, compliance, sync, bulk, drift
 # Command categories for grouped help display
 COMMAND_GROUPS = [
     ("CORE COMMANDS", [
-        "auth", "repo", "pr", "issue", "release", "org",
+        "auth", "app", "repo", "pr", "issue", "release", "org",
         "project", "codespace", "gist", "browse",
     ]),
     ("GITHUB ACTIONS COMMANDS", [
@@ -105,6 +106,7 @@ def main(ctx, debug):
 
 # Core commands
 main.add_command(auth)
+main.add_command(app_cmd)
 main.add_command(config)
 main.add_command(repo)
 main.add_command(pr)

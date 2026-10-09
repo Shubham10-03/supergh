@@ -26,6 +26,31 @@ class GitHubAppAuth(AuthProvider):
         self._store = TokenStore(namespace=f"app_{app_id}_{org}")
         self._cached_token: Optional[str] = None
         self._cached_expiry: Optional[datetime] = None
+        self._cached_jwt: Optional[str] = None
+        self._cached_jwt_expiry: Optional[datetime] = None
+
+    def get_jwt(self, force_refresh: bool = False) -> str:
+        """Return a valid app JWT (Bearer), signing a fresh one if needed.
+
+        JWTs are app-level credentials used for app endpoints such as
+        ``/app`` and ``/app/installations``. They are signed locally from the
+        PEM (no network call) and are valid for 10 minutes. We cache in-memory
+        and re-sign a minute before expiry to avoid clock-skew rejections.
+        """
+        now = datetime.utcnow()
+        if (
+            not force_refresh
+            and self._cached_jwt
+            and self._cached_jwt_expiry
+            and now < self._cached_jwt_expiry - timedelta(minutes=1)
+        ):
+            return self._cached_jwt
+
+        token = self._create_jwt()
+        # JWT exp is now+600s; cache slightly under that.
+        self._cached_jwt = token
+        self._cached_jwt_expiry = now + timedelta(minutes=10)
+        return token
 
     def get_token(self, force_refresh: bool = False) -> str:
         if not force_refresh:
